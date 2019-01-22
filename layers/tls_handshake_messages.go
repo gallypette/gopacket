@@ -1,0 +1,210 @@
+// Copyright 2018 The GoPacket Authors. All rights reserved.
+//
+// Use of this source code is governed by a BSD-style license
+// that can be found in the LICENSE file in the root of the source
+// tree.
+
+// Most of this content was extracted from go tls package
+
+package layers
+
+type handshakeMessage interface {
+	unmarshal([]byte) bool
+}
+
+type clientHelloMsg struct {
+	raw                          []byte
+	vers                         uint16
+	random                       []byte
+	sessionId                    []byte
+	cipherSuites                 []uint16
+	compressionMethods           []uint8
+	nextProtoNeg                 bool
+	serverName                   string
+	ocspStapling                 bool
+	scts                         bool
+	supportedCurves              []CurveID
+	supportedPoints              []uint8
+	ticketSupported              bool
+	sessionTicket                []uint8
+	supportedSignatureAlgorithms []SignatureScheme
+	secureRenegotiation          []byte
+	secureRenegotiationSupported bool
+	alpnProtocols                []string
+}
+
+func (m *clientHelloMsg) unmarshal(data []byte) bool {
+	if len(data) < 42 {
+		return false
+	}
+
+	m.raw = data
+	m.vers = uint16(data[4])<<8 | uint16(data[5])
+	m.random = data[6:38]
+	sessionIdLen := int(data[38])
+	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
+		return false
+	}
+
+	m.sessionId = data[39 : 39+sessionIdLen]
+	data = data[39+sessionIdLen:]
+	if len(data) < 2 {
+		return false
+	}
+
+	// cipherSuiteLen is the number of bytes of cipher suite numbers. Since
+	// they are uint16s, the number must be even.
+	cipherSuiteLen := int(data[0])<<8 | int(data[1])
+	if cipherSuiteLen%2 == 1 || len(data) < 2+cipherSuiteLen {
+		return false
+	}
+
+	numCipherSuites := cipherSuiteLen / 2
+	m.cipherSuites = make([]uint16, numCipherSuites)
+	for i := 0; i < numCipherSuites; i++ {
+		m.cipherSuites[i] = uint16(data[2+2*i])<<8 | uint16(data[3+2*i])
+		if m.cipherSuites[i] == scsvRenegotiation {
+			m.secureRenegotiationSupported = true
+		}
+	}
+	data = data[2+cipherSuiteLen:]
+	if len(data) < 1 {
+		return false
+	}
+
+	compressionMethodsLen := int(data[0])
+	if len(data) < 1+compressionMethodsLen {
+		return false
+	}
+
+	m.compressionMethods = data[1 : 1+compressionMethodsLen]
+	data = data[1+compressionMethodsLen:]
+	m.nextProtoNeg = false
+	m.serverName = ""
+	m.ocspStapling = false
+	m.ticketSupported = false
+	m.sessionTicket = nil
+	m.supportedSignatureAlgorithms = nil
+	m.alpnProtocols = nil
+	m.scts = false
+
+	if len(data) == 0 {
+		// ClientHello is optionally followed by extension data
+		return true
+	}
+
+	if len(data) < 2 {
+		return false
+
+	}
+	// I cut the extension parsing for now, I may get back to it
+	// if needed for ja3
+	return true
+
+}
+
+type serverHelloMsg struct {
+	raw                          []byte
+	vers                         uint16
+	random                       []byte
+	sessionId                    []byte
+	cipherSuite                  uint16
+	compressionMethod            uint8
+	nextProtoNeg                 bool
+	nextProtos                   []string
+	ocspStapling                 bool
+	scts                         [][]byte
+	ticketSupported              bool
+	secureRenegotiation          []byte
+	secureRenegotiationSupported bool
+	alpnProtocol                 string
+}
+
+func (m *serverHelloMsg) unmarshal(data []byte) bool {
+	if len(data) < 42 {
+		return false
+	}
+
+	m.raw = data
+	m.vers = uint16(data[4])<<8 | uint16(data[5])
+	m.random = data[6:38]
+	sessionIdLen := int(data[38])
+	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
+		return false
+	}
+	m.sessionId = data[39 : 39+sessionIdLen]
+	data = data[39+sessionIdLen:]
+	if len(data) < 3 {
+		return false
+	}
+	m.cipherSuite = uint16(data[0])<<8 | uint16(data[1])
+	m.compressionMethod = data[2]
+	data = data[3:]
+
+	m.nextProtoNeg = false
+	m.nextProtos = nil
+	m.ocspStapling = false
+	m.scts = nil
+	m.ticketSupported = false
+	m.alpnProtocol = ""
+	if len(data) == 0 {
+		// ServerHello is optionally followed by extension data
+		return true
+	}
+
+	if len(data) < 2 {
+		return false
+	}
+
+	extensionsLength := int(data[0])<<8 | int(data[1])
+	data = data[2:]
+	if len(data) != extensionsLength {
+		return false
+	}
+
+	// I cut the extension parsing for now, I may get back to it
+	// if needed for ja3s
+
+	return true
+}
+
+type certificateMsg struct {
+	raw          []byte
+	Certificates [][]byte
+}
+
+func (m *certificateMsg) unmarshal(data []byte) bool {
+	if len(data) < 7 {
+		return false
+	}
+	m.raw = data
+	certsLen := uint32(data[4])<<16 | uint32(data[5])<<8 | uint32(data[6])
+	if uint32(len(data)) != certsLen+7 {
+		return false
+	}
+	numCerts := 0
+	d := data[7:]
+	for certsLen > 0 {
+		if len(d) < 4 {
+			return false
+		}
+		certLen := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
+		if uint32(len(d)) < 3+certLen {
+			return false
+		}
+		d = d[3+certLen:]
+		certsLen -= 3 + certLen
+		numCerts++
+	}
+
+	m.Certificates = make([][]byte, numCerts)
+	d = data[7:]
+
+	for i := 0; i < numCerts; i++ {
+		certLen := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
+		m.Certificates[i] = d[3 : 3+certLen]
+		d = d[3+certLen:]
+	}
+
+	return true
+}
