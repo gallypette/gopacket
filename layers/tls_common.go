@@ -26,6 +26,20 @@ const (
 	compressionNone uint8 = 0
 )
 
+// TLS extension numbers
+const (
+	extensionServerName          uint16 = 0
+	extensionStatusRequest       uint16 = 5
+	extensionSupportedCurves     uint16 = 10
+	extensionSupportedPoints     uint16 = 11
+	extensionSignatureAlgorithms uint16 = 13
+	extensionALPN                uint16 = 16
+	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
+	extensionSessionTicket       uint16 = 35
+	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
+	extensionRenegotiationInfo   uint16 = 0xff01
+)
+
 // CurveID is the type of a TLS identifier for an elliptic curve. See
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
 type CurveID uint16
@@ -58,5 +72,3 @@ type SignatureScheme uint16
 const (
 	scsvRenegotiation uint16 = 0x00ff
 )
-
-type TLSHandshakeMessage handshakeMessage

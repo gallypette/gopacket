@@ -14,17 +14,17 @@ type handshakeMessage interface {
 
 type clientHelloMsg struct {
 	raw                          []byte
-	vers                         uint16
+	Vers                         uint16
 	random                       []byte
 	sessionId                    []byte
-	cipherSuites                 []uint16
+	CipherSuites                 []uint16
 	compressionMethods           []uint8
 	nextProtoNeg                 bool
 	serverName                   string
 	ocspStapling                 bool
 	scts                         bool
-	supportedCurves              []CurveID
-	supportedPoints              []uint8
+	SupportedCurves              []CurveID
+	SupportedPoints              []uint8
 	ticketSupported              bool
 	sessionTicket                []uint8
 	supportedSignatureAlgorithms []SignatureScheme
@@ -39,7 +39,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	}
 
 	m.raw = data
-	m.vers = uint16(data[4])<<8 | uint16(data[5])
+	m.Vers = uint16(data[4])<<8 | uint16(data[5])
 	m.random = data[6:38]
 	sessionIdLen := int(data[38])
 	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
@@ -60,10 +60,10 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	}
 
 	numCipherSuites := cipherSuiteLen / 2
-	m.cipherSuites = make([]uint16, numCipherSuites)
+	m.CipherSuites = make([]uint16, numCipherSuites)
 	for i := 0; i < numCipherSuites; i++ {
-		m.cipherSuites[i] = uint16(data[2+2*i])<<8 | uint16(data[3+2*i])
-		if m.cipherSuites[i] == scsvRenegotiation {
+		m.CipherSuites[i] = uint16(data[2+2*i])<<8 | uint16(data[3+2*i])
+		if m.CipherSuites[i] == scsvRenegotiation {
 			m.secureRenegotiationSupported = true
 		}
 	}
@@ -97,10 +97,58 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		return false
 
 	}
-	// I cut the extension parsing for now, I may get back to it
-	// if needed for ja3
-	return true
 
+	// We parse extensions as their needed for ja3
+	extensionsLength := int(data[0])<<8 | int(data[1])
+	data = data[2:]
+	if extensionsLength != len(data) {
+		return false
+	}
+
+	for len(data) != 0 {
+		if len(data) < 4 {
+			return false
+		}
+		extension := uint16(data[0])<<8 | uint16(data[1])
+		length := int(data[2])<<8 | int(data[3])
+		data = data[4:]
+		if len(data) < length {
+			return false
+		}
+
+		switch extension {
+		case extensionSupportedCurves:
+			// https://tools.ietf.org/html/rfc4492#section-5.5.1
+			if length < 2 {
+				return false
+			}
+			l := int(data[0])<<8 | int(data[1])
+			if l%2 == 1 || length != l+2 {
+				return false
+			}
+			numCurves := l / 2
+			m.SupportedCurves = make([]CurveID, numCurves)
+			d := data[2:]
+			for i := 0; i < numCurves; i++ {
+				m.SupportedCurves[i] = CurveID(d[0])<<8 | CurveID(d[1])
+				d = d[2:]
+			}
+		case extensionSupportedPoints:
+			// https://tools.ietf.org/html/rfc4492#section-5.5.2
+			if length < 1 {
+				return false
+			}
+			l := int(data[0])
+			if length != l+1 {
+				return false
+			}
+			m.SupportedPoints = make([]uint8, l)
+			copy(m.SupportedPoints, data[1:])
+		}
+
+		data = data[length:]
+	}
+	return true
 }
 
 type serverHelloMsg struct {
