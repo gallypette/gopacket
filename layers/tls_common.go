@@ -67,6 +67,7 @@ const (
 // SignatureScheme identifies a signature algorithm supported by TLS. See
 // https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.3.
 type SignatureScheme uint16
+type Extension uint16
 
 // TLS signaling cipher suite values
 const (

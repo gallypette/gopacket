@@ -14,6 +14,8 @@ type handshakeMessage interface {
 
 type clientHelloMsg struct {
 	raw                          []byte
+	extensions                   map[Extension]uint16
+	AllExtensions                []uint16
 	Vers                         uint16
 	random                       []byte
 	sessionId                    []byte
@@ -101,6 +103,8 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	// We parse extensions as their needed for ja3
 	extensionsLength := int(data[0])<<8 | int(data[1])
 	data = data[2:]
+	m.extensions = make(map[Extension]uint16)
+
 	if extensionsLength != len(data) {
 		return false
 	}
@@ -112,6 +116,9 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		extension := uint16(data[0])<<8 | uint16(data[1])
 		length := int(data[2])<<8 | int(data[3])
 		data = data[4:]
+
+		m.AllExtensions = append(m.AllExtensions, uint16(extension))
+
 		if len(data) < length {
 			return false
 		}
@@ -153,10 +160,12 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 
 type serverHelloMsg struct {
 	raw                          []byte
-	vers                         uint16
+	extensions                   map[Extension]uint16
+	AllExtensions                []uint16
+	Vers                         uint16
 	random                       []byte
 	sessionId                    []byte
-	cipherSuite                  uint16
+	CipherSuite                  uint16
 	compressionMethod            uint8
 	nextProtoNeg                 bool
 	nextProtos                   []string
@@ -174,7 +183,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 	}
 
 	m.raw = data
-	m.vers = uint16(data[4])<<8 | uint16(data[5])
+	m.Vers = uint16(data[4])<<8 | uint16(data[5])
 	m.random = data[6:38]
 	sessionIdLen := int(data[38])
 	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
@@ -185,7 +194,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 	if len(data) < 3 {
 		return false
 	}
-	m.cipherSuite = uint16(data[0])<<8 | uint16(data[1])
+	m.CipherSuite = uint16(data[0])<<8 | uint16(data[1])
 	m.compressionMethod = data[2]
 	data = data[3:]
 
@@ -204,15 +213,117 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		return false
 	}
 
+	// Import Extension code needed for ja3s
 	extensionsLength := int(data[0])<<8 | int(data[1])
 	data = data[2:]
+	m.extensions = make(map[Extension]uint16)
+
 	if len(data) != extensionsLength {
 		return false
 	}
 
-	// I cut the extension parsing for now, I may get back to it
-	// if needed for ja3s
+	for len(data) != 0 {
+		if len(data) < 4 {
+			return false
+		}
+		extension := uint16(data[0])<<8 | uint16(data[1])
+		length := int(data[2])<<8 | int(data[3])
+		data = data[4:]
 
+		m.AllExtensions = append(m.AllExtensions, uint16(extension))
+
+		if len(data) < length {
+			return false
+		}
+
+		switch extension {
+
+		case extensionNextProtoNeg:
+			m.nextProtoNeg = true
+			d := data[:length]
+			for len(d) > 0 {
+				l := int(d[0])
+				d = d[1:]
+				if l == 0 || l > len(d) {
+					return false
+				}
+				m.nextProtos = append(m.nextProtos, string(d[:l]))
+				d = d[l:]
+			}
+
+		case extensionStatusRequest:
+			if length > 0 {
+				return false
+			}
+			m.ocspStapling = true
+
+		case extensionSessionTicket:
+			if length > 0 {
+				return false
+			}
+			m.ticketSupported = true
+
+		case extensionRenegotiationInfo:
+			if length == 0 {
+				return false
+			}
+			d := data[:length]
+			l := int(d[0])
+			d = d[1:]
+			if l != len(d) {
+				return false
+			}
+
+			m.secureRenegotiation = d
+			m.secureRenegotiationSupported = true
+
+		case extensionALPN:
+			d := data[:length]
+			if len(d) < 3 {
+				return false
+			}
+			l := int(d[0])<<8 | int(d[1])
+			if l != len(d)-2 {
+				return false
+			}
+			d = d[2:]
+			l = int(d[0])
+			if l != len(d)-1 {
+				return false
+			}
+			d = d[1:]
+			if len(d) == 0 {
+				// ALPN protocols must not be empty.
+				return false
+			}
+			m.alpnProtocol = string(d)
+
+		case extensionSCT:
+			d := data[:length]
+			if len(d) < 2 {
+				return false
+			}
+			l := int(d[0])<<8 | int(d[1])
+			d = d[2:]
+			if len(d) != l || l == 0 {
+				return false
+			}
+			m.scts = make([][]byte, 0, 3)
+			for len(d) != 0 {
+				if len(d) < 2 {
+					return false
+				}
+				sctLen := int(d[0])<<8 | int(d[1])
+				d = d[2:]
+				if sctLen == 0 || len(d) < sctLen {
+					return false
+				}
+				m.scts = append(m.scts, d[:sctLen])
+				d = d[sctLen:]
+			}
+		}
+		data = data[length:]
+	}
 	return true
 }
 
